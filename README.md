@@ -858,3 +858,181 @@ Reciprocal Rank Fusion
 The system extracts structured knowledge from documents, stores it in Neo4j, retrieves both graph and vector context, combines those results, and uses an LLM to answer multi-hop questions.
 
 The main advantage of the approach is that it combines the semantic retrieval capabilities of vector search with the explicit relationship reasoning capabilities of a knowledge graph.
+
+
+Edge Case Handling
+
+# ============================================================
+# EDGE CASE HANDLING
+# ============================================================
+
+def safe_read_document(file_path):
+    """
+    Safely read the source document.
+    Handles:
+    1. Missing file
+    2. Empty file
+    3. Invalid/blank input
+    """
+    path = Path(file_path)
+
+    if not path.exists():
+        print(f"ERROR: Document not found: {path}")
+        return None
+
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        print(f"ERROR: Could not read document: {e}")
+        return None
+
+    if not text:
+        print("ERROR: Document is empty.")
+        return None
+
+    return text
+
+
+def safe_extract_graph(text_chunk):
+    """
+    Safely extract entities and relationships from a chunk.
+    Handles:
+    1. Empty chunks
+    2. LLM failures
+    3. Empty model output
+    """
+    if not text_chunk or not text_chunk.strip():
+        print("WARNING: Empty text chunk. Skipping extraction.")
+        return None
+
+    try:
+        result = extract_graph(text_chunk)
+
+        if result is None:
+            print("WARNING: Model returned no result.")
+            return None
+
+        if not result.entities and not result.relationships:
+            print("WARNING: Model returned an empty graph.")
+            return None
+
+        return result
+
+    except Exception as e:
+        print(f"WARNING: Graph extraction failed: {e}")
+        return None
+
+
+def safe_query(query):
+    """
+    Validate user input before running GraphRAG.
+    Handles empty or invalid questions.
+    """
+    if query is None or not isinstance(query, str):
+        return "ERROR: Query must be a text string."
+
+    query = query.strip()
+
+    if not query:
+        return "ERROR: Query cannot be empty."
+
+    if len(query) < 3:
+        return "ERROR: Query is too short."
+
+    return query
+
+    Use the document safety check
+    Instead of directly doing:
+    text = DOCUMENT_PATH.read_text(encoding="utf-8")
+    use:
+    text = safe_read_document(DOCUMENT_PATH)
+
+if text is None:
+    raise FileNotFoundError(
+        "A valid source document is required before continuing."
+    )
+
+print("Document loaded successfully.")
+print("Characters:", len(text))
+
+Use safe extraction
+
+Replace the normal extraction loop with:
+
+extractions = []
+
+for i, chunk in enumerate(chunks, 1):
+
+    result = safe_extract_graph(chunk)
+
+    if result is not None:
+        extractions.append(result)
+
+        print(
+            f"Chunk {i}/{len(chunks)} processed successfully: "
+            f"{len(result.entities)} entities, "
+            f"{len(result.relationships)} relationships"
+        )
+    else:
+        print(f"Chunk {i}/{len(chunks)} skipped.")
+
+print("Successful extractions:", len(extractions))
+
+Handle bad user queries
+
+Use:
+def safe_graphrag_answer(question):
+    question = safe_query(question)
+
+    if question.startswith("ERROR:"):
+        return question
+
+    try:
+        answer = graphrag_answer(question)
+
+        if not answer or not answer.strip():
+            return "The model returned an empty answer."
+
+        return answer
+
+    except Exception as e:
+        return f"GraphRAG failed to answer the question: {e}"
+
+        
+
+Test the edge cases:
+
+# Empty query
+print(safe_graphrag_answer(""))
+
+# Very short query
+print(safe_graphrag_answer("Hi"))
+
+# Valid query
+print(
+    safe_graphrag_answer(
+        "Which organization was founded by the person who is the CEO of Tesla?"
+    )
+)
+
+Edge Case Handling:
+The GraphRAG pipeline includes defensive checks for common failures. It verifies that the source document exists and is not empty, skips empty chunks, catches LLM extraction errors, detects empty model outputs, and validates user queries before retrieval. This prevents the pipeline from crashing when unexpected or invalid input is provided.
+
+## Why I Chose This Approach
+
+I chose GraphRAG because normal Vector RAG can struggle when an answer depends on multiple connected facts spread across different parts of a document. In a real business scenario, imagine a company knowledge assistant that needs to answer questions about employees, departments, projects, locations, customers, and business relationships. A simple vector search may find relevant documents, but it may not understand how these different pieces of information are connected.
+
+GraphRAG solves this problem by storing important entities and their relationships in a Neo4j knowledge graph. The system can then combine graph traversal with vector search to follow connections between multiple facts before generating an answer.
+
+For example, in a business knowledge system, a user might ask: “Which project is managed by the employee who works in the department responsible for the customer account?” Answering this may require following several relationships: employee → department → customer → account → project. GraphRAG is useful because these relationships are explicitly represented in the knowledge graph.
+
+This approach would benefit businesses such as banks, companies with large internal knowledge bases, customer-support teams, research organizations, and enterprise information systems. Personally, I can also use the same approach to build an intelligent knowledge assistant that can search my documents and understand relationships between people, organizations, projects, and concepts.
+
+I chose this approach because it combines the strengths of two retrieval methods: vector search provides semantic understanding, while the knowledge graph provides structured relationship-based reasoning. This makes the system more suitable for complex multi-hop questions than relying only on traditional RAG.
+
+## Brief Explanation
+
+This notebook builds a GraphRAG system that combines Neo4j knowledge-graph traversal with vector search to answer complex multi-hop questions.
+It uses an Ollama LLM to extract entities and relationships from a document and stores them as connected nodes and edges in Neo4j.
+Vector retrieval finds semantically relevant text, while graph retrieval follows relationships between entities.
+I built it this way so the system can combine both types of evidence and provide better answers to questions that basic RAG may struggle with.
